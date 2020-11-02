@@ -1,0 +1,124 @@
+#include <LiquidCrystal_I2C.h>
+#include <DeHasTeu.h>
+#define DHT_pin 2
+#define BEC_pin 3
+LiquidCrystal_I2C LCD(0x27, 16, 2);//Adresa I2C, coloane, linii
+DHT dht(DHT_pin);
+volatile int s = 10, m = 30, h = 19; // secunde, minute, ora
+volatile bool one_second = false;// flag pentru o secunda
+volatile bool two_second = false;// flag pentru doua secunde
+volatile float temperatura, prev_error, point = 35, suma_error;
+
+volatile float kp = 4;
+volatile float kd = 4;
+volatile float ki = 4;//18
+
+void timer1()
+{
+  DDRB |= 1 << PB5; // dev pin
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCCR1B |= (1 << WGM12) | (1 << CS12) | _BV(CS10) ;
+  TIMSK1 |= (1 << OCIE1A) | (1 << OCIE1B);
+  OCR1A = 15624;
+  OCR1B = 15624;
+  sei();
+}
+void timer2()
+{
+  TCCR2A=0;
+  TCCR2B=0;
+  TCCR2A|=(1<<WGM21); //ctc mode
+}
+void setup() {
+  LCD.init();
+  LCD.backlight();
+  timer1();
+  Serial.begin(9600);
+
+}
+
+
+void loop() {
+  // daca a trecut o secunda, se afiseaza temperatura
+  if (one_second)
+  {
+    //daca au trecut 2 secunde, citim temperatura
+    //DHT11 are maxim 0.5Hz
+    if (two_second)
+    {
+      dht.start();
+      temperatura = dht.Busu();
+      LCD.clear();
+      two_second = false;
+    }
+    //verificam temperatura citita
+    //-1 si -3 sunt erori din biblioteca
+
+    LCD.setCursor(0, 0);
+    LCD.print("ORA ");
+    LCD.setCursor(4, 0);
+    LCD.print(h);
+    LCD.setCursor(7, 0);
+    LCD.print(m);
+    LCD.setCursor(10, 0);
+    LCD.print(s);
+
+    LCD.setCursor(0, 1);
+    LCD.print("Temp= ");
+    if (temperatura > 0)
+    {
+
+      LCD.setCursor(7, 1);
+      LCD.print(temperatura);
+      LCD.print(" C");
+    }
+    else
+    {
+
+      LCD.setCursor(0, 1);
+      LCD.print("Eroare de senzor");
+
+    }
+    one_second = false;
+  }
+
+}
+
+ISR(TIMER1_COMPA_vect)
+{
+  PORTB ^= _BV(PB5);
+  if (digitalRead(13) == 0)
+    two_second = true;
+  //operatiuni pentru ora
+  s++;
+  if (s == 60)
+  {
+    m++;
+    s = 0;
+    if (m == 60)
+    {
+      h++;
+      m = 0;
+    }
+  }
+
+
+
+  one_second = true;
+}
+ISR(TIMER1_COMPB_vect)
+{
+  float error = point - temperatura;
+  if (error < 3 && error > -3)
+    suma_error += error;
+  float diff = (error - prev_error);
+  float output = kp * error + ki*suma_error + kd * diff;
+  output=constrain(output,0,100);
+  prev_error = error;
+  Serial.print(suma_error);
+  Serial.print("  ");
+  Serial.println(output);
+  analogWrite(BEC_pin,int(output));
+
+}
